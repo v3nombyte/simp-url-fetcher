@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+
+# Environment
+.env
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project data
+input/
+models_data/
+output/
+models_registry.json
+settings.json
+*.db
+
+# Config with credentials (but NOT pattern templates)
+config/settings.json
+settings.json
+
+# Logs
+*.log
+
+# Downloaded artifacts
+Downloads/
+
+# Runtime flag files
+*.rqd

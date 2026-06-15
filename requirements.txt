@@ -1,0 +1,10 @@
+nicegui>=2.0.0
+beautifulsoup4>=4.12
+lxml>=5.0
+requests>=2.31
+myjdapi>=1.0
+Pillow>=10.0
+imagehash>=4.3
+websocket-client>=1.8
+mega.py>=1.0
+playwright>=1.50
