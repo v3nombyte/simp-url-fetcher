@@ -2454,7 +2454,7 @@ class DownloadManager:
                                                          dl_progress_callback=progress_callback,
                                                          dl_file_progress_callback=file_progress_callback))
                         _overall_total += len(_album_files) - 1  # 1 URL → N files
-                        break  # skip the single-file _dl_one below
+                        continue  # album handled via dl_tasks; skip single-file path, process next URL
                 else:
                     # Single file — add to round-robin group for this host
                     round_robin_tasks.append((url, resolved_url, folder, stats,
