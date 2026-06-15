@@ -2662,6 +2662,7 @@ def build_info_tab():
         ui.label('• Aggregate speed tracking — total download speed across all active downloads, calculated from a rolling 5-second window.').classes('text-sm text-gray-300')
         ui.label('• Speed throttle — set max_speed_mbps in Settings (0 = unlimited) to cap per-file download speed in MB/s.').classes('text-sm text-gray-300')
         ui.label('• Failure context — all failed URLs are recorded in failed_downloads.txt with Mode{mode}, model_name, page, and post for debugging.').classes('text-sm text-gray-300')
+        ui.label('• Download history — every URL successfully downloaded is recorded in models_data/<model>/download_history.json. Re-extraction + re-download skips already-cached URLs, even if output files have been renamed/moved.').classes('text-sm text-gray-300')
         ui.label('').classes('text-xs')
         ui.label('Pixeldrain').classes('text-md font-bold text-blue-400')
         ui.separator()

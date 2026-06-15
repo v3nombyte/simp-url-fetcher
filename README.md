@@ -72,6 +72,7 @@ Completed downloads scroll off; the list always shows the next pending URLs.
 - Retry pass for all failed URLs
 - Failed URLs saved to file for later retry — includes mode/page/post context (Mode{mode}, model_name, page, post)
 - **Existing files skipped** automatically — pre-request file existence check prevents re-download
+- **Download history** — every URL is persisted in `models_data/<model>/download_history.json` on successful download. Re-extraction + re-download skips already-cached URLs automatically, even if output files were renamed or moved. Partial album downloads resume efficiently.
 
 ### Sort & Dedupe
 - SHA-256 exact duplicate detection (file-level)
@@ -187,7 +188,6 @@ systemctl --user start simp-url-fetcher.service
 ├── env.example              # Environment template
 ├── requirements.txt         # Python dependencies
 ├── models_registry.json     # Registry DB (gitignored)
-├── screenshots/             # README preview images
 └── scripts/                 # Utility scripts
 ```
 
@@ -255,20 +255,6 @@ git checkout dev
 - **`main`** — stable, MumPi pulls this for daily use
 - **`dev`** — experimental features (live panel, new host support, etc.)
 - Switch via the branch selector dropdown in Settings
-
-## Screenshots
-
-| Tab | Preview |
-|-----|---------|
-| **Info** | ![Info tab](screenshots/info.png) |
-| **Extract** | ![Extract tab](screenshots/extract.png) |
-| **Crawler** | ![Crawler tab](screenshots/crawler.png) |
-| **Models** | ![Models tab](screenshots/models.png) |
-| **Import/Export** | ![Import/Export tab](screenshots/import-export.png) |
-| **Sort** | ![Sort tab](screenshots/sort.png) |
-| **Rename** | ![Rename tab](screenshots/rename.png) |
-| **Settings** | ![Settings tab](screenshots/settings.png) |
-| **Logs** | ![Logs tab](screenshots/logs.png) |
 
 ## Requirements
 
