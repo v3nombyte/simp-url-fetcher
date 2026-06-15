@@ -1455,7 +1455,8 @@ class URLResolver:
 
     # ── Batch resolution ───────────────────────────────────────────
 
-    async def resolve_batch(self, urls: list[str]) -> dict[str, Optional[str]]:
+    async def resolve_batch(self, urls: list[str],
+                            cancel_event=None) -> dict[str, Optional[str]]:
         """Resolve a batch of URLs using the appropriate strategy for each."""
         result: dict[str, Optional[str]] = {}
         browser_urls: list[str] = []
@@ -1524,6 +1525,14 @@ class URLResolver:
             with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
                 futures = {pool.submit(_resolve_oe, url): url for url in oembed_urls}
                 for f in concurrent.futures.as_completed(futures):
+                    # Check cancel every 50 resolved URLs
+                    if cancel_event and cancel_event.is_set():
+                        _log('oEmbed resolution cancelled by user', 'WARN')
+                        # Mark remaining as None
+                        for remaining_url in futures.values():
+                            if remaining_url not in result:
+                                result[remaining_url] = None
+                        break
                     url, rurl = f.result()
                     result[url] = rurl
                     resolved_count += 1
@@ -2213,7 +2222,11 @@ class DownloadManager:
         _gallery_count = 0
         _expanded_all_urls: list[str] = []
         _gallery_url_to_parent: dict[str, tuple[int, int]] = {}
-        for url in all_urls:
+        for _g_idx, url in enumerate(all_urls):
+            # Check cancel every 20 URLs during gallery expansion (which makes HTTP calls)
+            if cancel_event and cancel_event.is_set():
+                _log(f'Download cancelled during gallery expansion ({_g_idx}/{len(all_urls)})', 'WARN')
+                break
             expanded = self.resolver._try_expand_gallery(url)
             if expanded:
                 _gallery_count += 1
@@ -2258,7 +2271,7 @@ class DownloadManager:
                 batch_result = await next_resolve_task
                 next_resolve_task = None
             else:
-                batch_result = await self.resolver.resolve_batch(batch)
+                batch_result = await self.resolver.resolve_batch(batch, cancel_event=cancel_event)
             resolution_map.update(batch_result)
 
             # Pre-start next batch resolution (if streaming enabled)
@@ -2266,7 +2279,7 @@ class DownloadManager:
                 next_batch = all_batches[batch_idx + 1]
                 _log(f'Pre-resolving batch {batch_idx+2}/{len(all_batches)} ({len(next_batch)} URLs)...')
                 next_resolve_task = asyncio.create_task(
-                    self.resolver.resolve_batch(next_batch)
+                    self.resolver.resolve_batch(next_batch, cancel_event=cancel_event)
                 )
 
             resolved_so_far += len(batch)
@@ -2490,7 +2503,7 @@ class DownloadManager:
                     break
                 await asyncio.sleep(2)  # Brief cooldown before retry
                 _log(f'Retry batch {retry_idx+1}/{len(retry_batches)} ({len(retry_batch)} URLs)...')
-                retry_result = await self.resolver.resolve_batch(retry_batch)
+                retry_result = await self.resolver.resolve_batch(retry_batch, cancel_event=cancel_event)
                 retry_tasks = []
                 for url, rurl in retry_result.items():
                     if rurl:
@@ -2692,7 +2705,7 @@ def retry_failed_urls(
                 break
 
             _log(f'Retry: resolve batch {batch_idx + 1}/{len(all_batches)} ({len(batch)} URLs)...')
-            batch_result = await resolver.resolve_batch(batch)
+            batch_result = await resolver.resolve_batch(batch, cancel_event=cancel_event)
 
             dl_tasks = []
             for url in batch:
