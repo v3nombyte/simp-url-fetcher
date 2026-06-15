@@ -2565,28 +2565,52 @@ def build_info_tab():
             update_info = ui.label('').classes('text-sm text-yellow-200 flex-grow')
             ui.label('Install via Settings → Updates & Restart').classes('text-xs text-gray-400 mt-1')
 
+    # ── Uptodate banner (visible when no update) ──
+    uptodate_banner = ui.card().classes('w-full bg-green-900/20 border border-green-700').set_visibility(False)
+    with uptodate_banner:
+        with ui.row().classes('w-full items-start gap-2 p-1'):
+            ui.icon('check_circle').classes('text-green-400 mt-0.5')
+            uptodate_info = ui.label('').classes('text-sm text-green-200 flex-grow')
+
+    _check_banner = ui.label('').classes('text-xs text-gray-500')
+
     def _apply_update_state(state: dict):
-        if state.get('checked') and state.get('update_available'):
+        if state.get('error'):
+            _check_banner.text = f'Update check failed: {state["error"]}'
+            update_banner.set_visibility(False)
+            uptodate_banner.set_visibility(False)
+        elif state.get('checked') and state.get('update_available'):
             update_info.text = (
                 f'{state.get("local_branch", "?")}: '
                 f'{state.get("local_sha", "?")} → {state.get("remote_sha", "?")}'
             )
             update_banner.set_visibility(True)
-        elif state.get('error'):
-            update_info.text = f'Check failed: {state["error"]}'
+            uptodate_banner.set_visibility(False)
+            _check_banner.text = ''
+        elif state.get('checked'):
+            uptodate_info.text = (
+                f'{state.get("local_branch", "?")} @ {state.get("local_sha", "?")} — up to date'
+            )
+            uptodate_banner.set_visibility(True)
             update_banner.set_visibility(False)
+            _check_banner.text = ''
         else:
             update_banner.set_visibility(False)
+            uptodate_banner.set_visibility(False)
+            _check_banner.text = 'Checking for updates...'
 
-    # Apply initial state if already checked
+    # Apply current state immediately
     _apply_update_state(_update_state)
 
-    # Poll until check completes (if startup check is still running)
-    def _poll_update():
+    # Re-check on every visit to this tab (non-blocking)
+    _update_state['checked'] = False  # force re-check
+    threading.Thread(target=_check_for_updates, daemon=True).start()
+
+    def _poll_check():
         if _update_state.get('checked'):
             _apply_update_state(_update_state)
-            _poll_timer.deactivate()
-    _poll_timer = ui.timer(0.5, _poll_update, active=True)
+            _poll_t.deactivate()
+    _poll_t = ui.timer(0.5, _poll_check, active=True)
 
     info_overview()
     # Auto-refresh overview every 5s so stats stay current when navigating back from other tabs
