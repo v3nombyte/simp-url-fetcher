@@ -104,7 +104,8 @@ class ModelRegistry:
     def register_download(self, model_name: str, total_urls: int, total_files: int,
                           total_bytes: int, failed_count: int, skipped_count: int,
                           resolve_failed_count: int = 0,
-                          resolve_failed_file: str = ''):
+                          resolve_failed_file: str = '',
+                          history_skipped_count: int = 0):
         """Register completed download results for a model."""
         with self._lock:
             entry = self.models.get(model_name)
@@ -117,6 +118,7 @@ class ModelRegistry:
                 'total_bytes': total_bytes,
                 'failed_count': failed_count,
                 'skipped_count': skipped_count,
+                'history_skipped_count': history_skipped_count,
                 'resolve_failed_count': resolve_failed_count,
                 'resolve_failed_file': resolve_failed_file,
                 'status': 'complete',

@@ -2245,6 +2245,23 @@ class DownloadManager:
             all_urls = _expanded_all_urls
             url_to_post.update(_gallery_url_to_parent)
         _overall_total = len(all_urls)  # update after gallery expansion
+        # ── Download history: skip already-downloaded URLs ──────────────
+        _dl_history: DownloadHistory | None = None
+        _history_skipped_count = 0
+        if models_data_dir:
+            try:
+                _dl_history = DownloadHistory(models_data_dir, model_name)
+                _history_skipped = [u for u in all_urls if _dl_history.is_downloaded(u)]
+                if _history_skipped:
+                    _history_skipped_count = len(_history_skipped)
+                    _log(f'Skipping {_history_skipped_count} already-downloaded URLs '
+                         f'(from {os.path.basename(_dl_history.path)})', 'INFO')
+                    all_urls = [u for u in all_urls if u not in _history_skipped]
+                    _overall_total = len(all_urls)
+            except Exception as _he:
+                _log(f'Failed to load download history: {_he}', 'WARN')
+                _dl_history = None
+        # ─────────────────────────────────────────────────────────────────
         _failed_resolve_urls: list[str] = []  # track resolution-failed URLs (mapped to root album if applicable)
         # Track resolved-but-not-yet-downloaded URLs by host for the host queue display
         _resolved_pending_hosts: dict[str, int] = {}
@@ -2330,13 +2347,15 @@ class DownloadManager:
                 # Define once for all batches + retry pass
                 _dl_sem = asyncio.Semaphore(self.max_concurrent)
                 _dl_host_locks: dict[str, asyncio.Semaphore] = {}
+                _pending_albums: list[dict] = []
 
             async def _dl_one(src_url, res_url, dl_folder, dl_stats, dl_eta_val,
                               dl_page=0, dl_post=0,
                               dl_filename='', dl_strategy='',
                               dl_mode='',
                               dl_progress_callback=None,
-                              dl_file_progress_callback=None):
+                              dl_file_progress_callback=None,
+                              is_album_file=False):
                 # Check cancel before starting each download
                 if cancel_event and cancel_event.is_set():
                     return False
@@ -2375,6 +2394,14 @@ class DownloadManager:
                         overall_completed=_overall_completed_now,
                         overall_eta=_overall_eta_now,
                         pending_hosts=dict(_resolved_pending_hosts))
+                # Record in download history (if not skipped)
+                if ok and not _was_skipped and _dl_history:
+                    _dl_history.mark_downloaded(
+                        src_url,
+                        size=file_size,
+                        url_type='album_file' if is_album_file else 'direct',
+                        filename=dl_filename,
+                    )
                 return ok
 
             # ── Process resolved URLs in host-diverse (round-robin) order ──
@@ -2450,7 +2477,13 @@ class DownloadManager:
                     _host_type, _album_page = _album_info
                     _album_files = _scrape_album_files(_host_type, _album_page, self.resolver._session)
                     if _album_files:
+                        _album_child_urls: list[str] = []
                         for _af in _album_files:
+                            # Check download history for album file URLs
+                            if _dl_history and _dl_history.is_downloaded(_af['url']):
+                                _log(f'Skipping already-downloaded album file: {_af["filename"]}', 'INFO')
+                                stats.skipped += 1
+                                continue
                             # Handle PixelDrain list ZIP (streaming extraction)
                             if _af['url'].startswith('__PIXELDRAIN_LIST_ZIP__:'):
                                 parts = _af['url'].split(':')
@@ -2473,6 +2506,7 @@ class DownloadManager:
                                 _overall_completed += processed_count if processed_count > 0 else 1
                                 _log(f'OK PixelDrain list ZIP: {list_id} ({processed_count} files)')
                             else:
+                                _album_child_urls.append(_af['url'])
                                 dl_tasks.append(_dl_one(url, _af['url'], folder, stats, 0,
                                                          dl_page=_u_page,
                                                          dl_post=_u_post,
@@ -2480,7 +2514,15 @@ class DownloadManager:
                                                          dl_strategy=strategy,
                                                          dl_mode=mode,
                                                          dl_progress_callback=progress_callback,
-                                                         dl_file_progress_callback=file_progress_callback))
+                                                         dl_file_progress_callback=file_progress_callback,
+                                                         is_album_file=True))
+                        # Track album URL for marking after download gather
+                        if _album_child_urls:
+                            _pending_albums.append({
+                                'album_url': url,
+                                'child_urls': _album_child_urls,
+                                'child_count': len(_album_child_urls),
+                            })
                         _overall_total += len(_album_files) - 1  # 1 URL → N files
                         continue  # album handled via dl_tasks; skip single-file path, process next URL
                 else:
@@ -2505,6 +2547,19 @@ class DownloadManager:
                                                 dl_progress_callback=progress_callback,
                                                 dl_file_progress_callback=file_progress_callback))
                 await asyncio.gather(*all_dl_tasks, return_exceptions=True)
+
+            # Mark tracked albums in download history (all children attempted)
+            if _dl_history and _pending_albums:
+                for _pa in _pending_albums:
+                    _dl_history.mark_album_downloaded(
+                        _pa['album_url'], _pa['child_urls'], total_size=0,
+                    )
+                # Save periodically (every batch)
+                try:
+                    _dl_history.save()
+                except Exception as _hse:
+                    _log(f'Failed to save download history: {_hse}', 'WARN')
+                _pending_albums.clear()
 
             # ── Cancel check after batch ──
             if cancel_event and cancel_event.is_set():
@@ -2622,7 +2677,15 @@ class DownloadManager:
                               overall_completed=_overall_completed_final,
                               errors=stats.errors[:10],
                               resolve_failed=len(_failed_resolve_urls),
-                              resolve_failed_file=fail_resolve_path if _failed_resolve_urls else '')
+                              resolve_failed_file=fail_resolve_path if _failed_resolve_urls else '',
+                              history_skipped=_history_skipped_count)
+
+        # Save download history at final completion
+        if _dl_history:
+            try:
+                _dl_history.save()
+            except Exception as _hse:
+                _log(f'Failed to save download history: {_hse}', 'WARN')
 
         if stats.errors:
             _log(f'Errors ({len(stats.errors)}):', 'WARN')
@@ -2663,6 +2726,105 @@ class _CancelChecker:
         if self._file_path and os.path.exists(self._file_path):
             return True
         return False
+
+
+# ── Download History (persistent URL tracking) ──────────────────────
+
+
+class DownloadHistory:
+    """Tracks which URLs have been successfully downloaded for a model.
+
+    Persists to models_data/<model_name>/download_history.json so that
+    re-extraction + re-download skips URLs already handled in previous runs.
+    Covers both direct file URLs and gallery/album-expanded file URLs.
+    """
+
+    def __init__(self, models_data_dir: str, model_name: str):
+        self.path = os.path.join(models_data_dir, model_name, 'download_history.json')
+        self.data = self._load()
+
+    def _load(self) -> dict:
+        if os.path.exists(self.path):
+            try:
+                with open(self.path, encoding='utf-8') as f:
+                    return json.load(f)
+            except (json.JSONDecodeError, OSError):
+                pass
+        return {
+            'version': 1,
+            'model_name': '',
+            'created_at': '',
+            'updated_at': '',
+            'urls': {},
+            'total_count': 0,
+            'total_bytes': 0,
+        }
+
+    def is_downloaded(self, url: str) -> bool:
+        """Check if a URL was already downloaded in a previous session."""
+        return url in self.data.get('urls', {})
+
+    def mark_downloaded(self, url: str, size: int = 0,
+                        url_type: str = 'direct', filename: str = ''):
+        """Record a single URL as successfully downloaded."""
+        now = datetime.now().isoformat(timespec='seconds')
+        entry = self.data['urls'].get(url)
+        if entry:
+            # Already exists — update size if this run had one
+            if size and not entry.get('size'):
+                entry['size'] = size
+            if filename and not entry.get('filename'):
+                entry['filename'] = filename
+            return
+        self.data['urls'][url] = {
+            'downloaded_at': now,
+            'type': url_type,
+            'size': size,
+            'filename': filename,
+        }
+        self.data['total_count'] = len(self.data['urls'])
+        self.data['total_bytes'] += size
+        self.data['updated_at'] = now
+        if not self.data['created_at']:
+            self.data['created_at'] = now
+
+    def mark_album_downloaded(self, album_url: str,
+                               child_urls: list[str],
+                               total_size: int = 0):
+        """Record an album URL and all its child file URLs as downloaded."""
+        now = datetime.now().isoformat(timespec='seconds')
+        # Mark the album itself
+        self.data['urls'][album_url] = {
+            'downloaded_at': now,
+            'type': 'album',
+            'size': total_size,
+            'file_count': len(child_urls),
+        }
+        # Mark each child file (won't overwrite if already marked by _dl_one)
+        for cu in child_urls:
+            if cu not in self.data['urls']:
+                self.data['urls'][cu] = {
+                    'downloaded_at': now,
+                    'type': 'album_file',
+                    'size': 0,
+                }
+        self.data['total_count'] = len(self.data['urls'])
+        self.data['total_bytes'] += total_size
+        self.data['updated_at'] = now
+        if not self.data['created_at']:
+            self.data['created_at'] = now
+
+    def save(self):
+        os.makedirs(os.path.dirname(self.path), exist_ok=True)
+        with open(self.path, 'w', encoding='utf-8') as f:
+            json.dump(self.data, f, indent=2, ensure_ascii=False)
+
+    def get_stats(self) -> dict:
+        return {
+            'total_downloaded': self.data.get('total_count', 0),
+            'total_bytes': self.data.get('total_bytes', 0),
+            'last_updated': self.data.get('updated_at', ''),
+        }
 
 
 # ── Convenience entry point ────────────────────────────────────────

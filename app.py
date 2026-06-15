@@ -2218,11 +2218,13 @@ def build_models_tab():
                                         skp_str = f', {skp} skipped' if skp else ''
                                         _resolve_failed = kw.get('resolve_failed', 0)
                                         _resolve_failed_file = kw.get('resolve_failed_file', '')
+                                        _history_skipped = kw.get('history_skipped', 0)
                                         if _resolve_failed:
                                             rf_str = f', {_resolve_failed} unresolved'
                                         else:
                                             rf_str = ''
-                                        _status_queue.append(('text', f'✓ Download complete: {okc} OK, {fld} failed{skp_str}{rf_str} ({_fmt_size(tbytes)})'))
+                                        _history_str = f', {_history_skipped} cached' if _history_skipped else ''
+                                        _status_queue.append(('text', f'✓ Download complete: {okc} OK, {fld} failed{skp_str}{rf_str}{_history_str} ({_fmt_size(tbytes)})'))
                                         _status_queue.append(('btn_enable', None))
                                         _status_queue.append(('cancel_hide', None))
                                         _status_queue.append(('stop_poll', None))
@@ -2232,7 +2234,8 @@ def build_models_tab():
                                         log(f'Download finished for {mname}: {okc} OK, {fld} failed{skp_str}{rf_str}, {_fmt_size(tbytes)}')
                                         registry.register_download(mname, okc + fld + skp, total_ok, tbytes, fld, skp,
                                                                    resolve_failed_count=_resolve_failed,
-                                                                   resolve_failed_file=_resolve_failed_file)
+                                                                   resolve_failed_file=_resolve_failed_file,
+                                                                   history_skipped_count=_history_skipped)
 
                                 _cancel_events[mname] = _dl_cancel_event
                                 out_base = os.path.join(PROJECT_DIR, settings.output_dir)
