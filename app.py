@@ -2658,15 +2658,19 @@ def _cancel_download_immediate(model_name: str):
 
 
 def build_download_tab():
-    """Show active downloads — redesigned layout matching user spec."""
+    """Show active downloads — truly persistent layout. Card structures built once, values updated in-place."""
+
     # ── Persistent cancel bar (rebuilt only when active model list changes) ──
     cancel_bar = ui.row().classes('w-full gap-2 mb-2 flex-wrap items-center')
     _last_active_models: list[str] = []
 
-    # ── Data section (rebuilt every 2s) ──
+    # ── Persistent data section (cards built once, never cleared) ──
     dl_container = ui.column().classes('w-full gap-4')
+    # model_name -> {element refs}
+    _card_refs: dict[str, dict] = {}
+    _idle_label_ref = [None]  # placeholder for "no downloads" message
 
-    def _update_cancel_bar():
+    def _cancel_check():
         nonlocal _last_active_models
         active_models = []
         for name, entry in registry.models.items():
@@ -2675,7 +2679,7 @@ def build_download_tab():
                 active_models.append(name)
 
         if active_models == _last_active_models:
-            return  # no change — keep buttons stable
+            return
         _last_active_models = list(active_models)
         cancel_bar.clear()
         if active_models:
@@ -2685,9 +2689,68 @@ def build_download_tab():
                           on_click=lambda _e, n=mn: _cancel_download_immediate(n)) \
                     .props('color=negative outline size=sm')
 
-    def _render():
+    # ── Card builder: creates the once-off structure ──
+    def _build_card(name: str) -> dict:
+        """Create a download card. Returns dict of element refs for in-place updates."""
+        refs = {}
+        with dl_container:
+            with ui.card().classes('w-full bg-gray-800 p-3') as card:
+                refs['_card'] = card
+
+                # Header row
+                with ui.row().classes('w-full items-center gap-3'):
+                    ui.label(name).classes('text-lg font-bold')
+                    refs['total_urls'] = ui.label('').classes('text-sm font-mono text-gray-400')
+                    refs['speed'] = ui.label('').classes('text-xs font-mono text-cyan-400')
+                    refs['eta'] = ui.label('').classes('text-xs font-mono text-orange-400')
+                    ui.space()
+                    ui.button('Cancel', icon='cancel',
+                              on_click=lambda _e, mn=name: _cancel_download_immediate(mn)) \
+                        .props('color=negative outline size=sm')
+
+                # Stats
+                with ui.row().classes('w-full text-sm gap-3 mt-1'):
+                    refs['ok'] = ui.label('').classes('font-mono text-green-400')
+                    refs['fail'] = ui.label('').classes('font-mono text-red-400')
+                    refs['skipped'] = ui.label('').classes('font-mono text-gray-400')
+
+                refs['total_size'] = ui.label('').classes('text-xs font-mono text-gray-300')
+
+                # Status
+                with ui.row().classes('w-full text-xs items-start gap-1 mt-1'):
+                    ui.label('Status:').classes('text-gray-500 font-bold')
+                    refs['status'] = ui.label('').classes('text-yellow-400/90 font-mono')
+
+                ui.separator()
+
+                # Main progress bar
+                with ui.row().classes('w-full gap-2 items-center'):
+                    refs['progress_bar'] = ui.linear_progress(value=0, show_value=False) \
+                        .props('size=24px color=green-600 track-color=gray-700').classes('flex-1')
+                    refs['progress_pct'] = ui.label('').classes(
+                        'text-sm font-mono text-gray-300 w-12 text-right')
+
+                ui.separator()
+
+                # Host queue
+                ui.label('URLs in queue per host').classes('text-xs text-gray-400 font-bold')
+                refs['host_queue'] = ui.column().classes('w-full gap-0.5')
+
+                ui.separator()
+
+                # Downloads table
+                ui.label('Downloads').classes('text-xs text-gray-400 font-bold')
+                refs['downloads'] = ui.column().classes('w-full gap-0.5')
+
+        return refs
+
+    def _rebuild_all():
+        """Rebuild all cards — call only when active-model list changes."""
+        _cancel_check()
         dl_container.clear()
-        active = False
+        _card_refs.clear()
+        _idle_label_ref[0] = None
+
         for name, entry in registry.models.items():
             dl_info = entry.get('download')
             if not dl_info:
@@ -2695,7 +2758,38 @@ def build_download_tab():
             dl_status = dl_info.get('status', '')
             if not dl_status or dl_status == 'complete':
                 continue
-            active = True
+            _card_refs[name] = _build_card(name)
+
+        if not _card_refs:
+            with dl_container:
+                _idle_label_ref[0] = ui.label(
+                    'Start a download from the Models tab.'
+                ).classes('text-gray-400 py-8 text-center text-lg')
+
+    def _update_all():
+        """Update card values in-place — no destruction/recreation of card elements.
+        Only inner containers (host_queue, downloads) are cleared because their
+        content inherently changes shape."""
+        # ── Detect model-list changes ──
+        current_active = set()
+        for name, entry in registry.models.items():
+            dl_info = entry.get('download')
+            if dl_info and dl_info.get('status', '') not in ('', 'complete'):
+                current_active.add(name)
+
+        existing = set(_card_refs.keys())
+        if current_active != existing:
+            _rebuild_all()
+            return
+
+        # ── Update each card in-place ──
+        for name, refs in _card_refs.items():
+            entry = registry.get(name)
+            if not entry:
+                continue
+            dl_info = entry.get('download')
+            if not dl_info:
+                continue
 
             _completed = dl_info.get('total_files', 0)
             _failed = dl_info.get('failed_count', 0)
@@ -2706,131 +2800,115 @@ def build_download_tab():
             _status_text = dl_info.get('status', '')
             _host_queue = dl_info.get('host_queue', {})
             _active_files = dl_info.get('active_files', [])
+            _total_done = _completed + _failed + _skipped
 
-            with dl_container, ui.card().classes('w-full bg-gray-800 p-3'):
-                # ── Header: Model | Total URLs | Speed | ETA ──
-                with ui.row().classes('w-full items-center gap-3'):
-                    ui.label(name).classes('text-lg font-bold')
-                    ui.label(f'Total URLs: {_total_urls}').classes('text-sm font-mono text-gray-400')
-                    if _speed_bps > 0:
-                        ui.label(_fmt_speed(_speed_bps)).classes('text-xs font-mono text-cyan-400')
-                    # ETA
-                    _total_done = _completed + _failed + _skipped
-                    if _speed_bps > 0 and _total_urls > 0 and _total_done < _total_urls:
-                        _remaining = _total_urls - _total_done
-                        _avg_size = _total_bytes / _total_done if _total_done > 0 else 0
-                        _eta_s = (_remaining * _avg_size) / _speed_bps if _avg_size > 0 else 9999
-                        ui.label(f'ETA {_fmt_eta(_eta_s)}').classes('text-xs font-mono text-orange-400')
-                    else:
-                        ui.label('—').classes('text-xs font-mono text-gray-500')
-                    ui.space()
-                    # Cancel button inside card too as fallback
-                    ui.button('Cancel', icon='cancel',
-                              on_click=lambda _e, mn=name: _cancel_download_immediate(mn)) \
-                        .props('color=negative outline size=sm')
+            # Header
+            refs['total_urls'].set_text(f'Total URLs: {_total_urls}')
+            refs['speed'].set_text(_fmt_speed(_speed_bps) if _speed_bps > 0 else '')
 
-                # ── Stats line: X OK | Y Fail | Z Skipped ──
-                with ui.row().classes('w-full text-sm gap-3 mt-1'):
-                    ui.label(f'{_completed} OK').classes('font-mono text-green-400')
-                    if _failed:
-                        ui.label(f'{_failed} Fail').classes('font-mono text-red-400')
-                    if _skipped:
-                        ui.label(f'{_skipped} Skipped').classes('font-mono text-gray-400')
+            if _speed_bps > 0 and _total_urls > 0 and _total_done < _total_urls:
+                _remaining = _total_urls - _total_done
+                _avg_size = _total_bytes / _total_done if _total_done > 0 else 0
+                _eta_s = (_remaining * _avg_size) / _speed_bps if _avg_size > 0 else 9999
+                refs['eta'].set_text(f'ETA {_fmt_eta(_eta_s)}')
+                refs['eta'].set_visibility(True)
+            else:
+                refs['eta'].set_text('—')
 
-                # ── Total downloaded size ──
-                ui.label(f'{_fmt_size(_total_bytes)} Total downloaded').classes(
-                    'text-xs font-mono text-gray-300')
+            # Stats
+            refs['ok'].set_text(f'{_completed} OK')
+            refs['ok'].set_visibility(True)
+            if _failed:
+                refs['fail'].set_text(f'{_failed} Fail')
+                refs['fail'].set_visibility(True)
+            else:
+                refs['fail'].set_visibility(False)
+            if _skipped:
+                refs['skipped'].set_text(f'{_skipped} Skipped')
+                refs['skipped'].set_visibility(True)
+            else:
+                refs['skipped'].set_visibility(False)
 
-                # ── Status section ──
-                with ui.row().classes('w-full text-xs items-start gap-1 mt-1'):
-                    ui.label('Status:').classes('text-gray-500 font-bold')
-                    ui.label(_status_text).classes('text-yellow-400/90 font-mono')
+            refs['total_size'].set_text(f'{_fmt_size(_total_bytes)} Total downloaded')
+            refs['status'].set_text(_status_text)
 
-                # ── Separator ──
-                ui.separator()
+            # Progress bar
+            if _total_urls > 0:
+                _pct = min(_total_done / _total_urls, 1.0)
+                refs['progress_bar'].set_value(_pct)
+                refs['progress_pct'].set_text(f'{int(_pct * 100)}%')
+                refs['progress_bar'].set_visibility(True)
+                refs['progress_pct'].set_visibility(True)
+            else:
+                refs['progress_bar'].set_visibility(False)
+                refs['progress_pct'].set_visibility(False)
 
-                # ── Main progress bar ──
-                if _total_urls > 0:
-                    _pct = min(_total_done / _total_urls, 1.0)
-                    with ui.row().classes('w-full gap-2 items-center'):
-                        ui.linear_progress(value=_pct, show_value=False) \
-                            .props('size=24px color=green-600 track-color=gray-700') \
-                            .classes('flex-1')
-                        ui.label(f'{int(_pct * 100)}%').classes(
-                            'text-sm font-mono text-gray-300 w-12 text-right')
-
-                # ── Separator ──
-                ui.separator()
-
-                # ── Host queue ──
-                ui.label('URLs in queue per host').classes('text-xs text-gray-400 font-bold')
-                if _host_queue:
-                    _sorted_hosts = sorted(_host_queue.items(), key=lambda x: -x[1])
-                    for _h_idx, (_host, _hcount) in enumerate(_sorted_hosts):
+            # Host queue — rebuild inner container (content changes shape)
+            refs['host_queue'].clear()
+            if _host_queue:
+                _sorted_hosts = sorted(_host_queue.items(), key=lambda x: -x[1])
+                for _h_idx, (_host, _hcount) in enumerate(_sorted_hosts):
+                    with refs['host_queue']:
                         with ui.row().classes('w-full items-center gap-1 py-0.5 px-1 rounded').style(
                                 'background: rgba(6,182,212,0.06)' if _h_idx % 2 == 0 else ''):
-                            ui.label(_host).classes('text-xs font-mono truncate flex-1 min-w-0 text-gray-400')
+                            ui.label(_host).classes(
+                                'text-xs font-mono truncate flex-1 min-w-0 text-gray-400')
                             ui.label(str(_hcount)).classes(
                                 'text-xs font-mono w-16 shrink-0 text-right text-yellow-200/90')
+            else:
+                with refs['host_queue']:
+                    ui.label('Collecting host data...').classes(
+                        'text-xs text-gray-500 italic py-1')
+
+            # Downloads table — rebuild inner container (content changes shape)
+            refs['downloads'].clear()
+            with refs['downloads']:
+                # Column header
+                with ui.row().classes('w-full items-center gap-1 text-xs text-gray-500 font-bold px-1 mb-1'):
+                    ui.label('Filename').classes('flex-1 min-w-0')
+                    ui.label('Type').classes('w-12 shrink-0')
+                    ui.label('Host').classes('w-22 shrink-0')
+                    ui.label('Size').classes('w-24 shrink-0 text-right')
+                    ui.label('Speed').classes('w-16 shrink-0 text-right')
+                    ui.label('Progress').classes('w-28 shrink-0 text-right')
+                if _active_files:
+                    for af_idx, af in enumerate(_active_files[:10]):
+                        fn = af.get('filename', '?')
+                        host = af.get('host', '')
+                        dl = af.get('downloaded', 0)
+                        total = af.get('total_bytes', 0)
+                        spd = af.get('speed', 0.0)
+                        pct_val = min(dl / total, 1.0) if total > 0 else 0
+                        pct_str = f'{int(pct_val * 100)}%' if total > 0 else '?'
+                        size_str = _fmt_size(total) if total > 0 else _fmt_size(dl)
+                        speed_str = _fmt_speed(spd) if spd > 0 else '—'
+                        fn_display = fn[:28] + '…' if len(fn) > 29 else fn
+                        _ext = os.path.splitext(fn)[1].lower()[:6] if '.' in fn else ''
+                        with ui.row().classes('w-full items-center gap-1 py-0.5 px-1 rounded').style(
+                                'background: rgba(6,182,212,0.06)' if af_idx % 2 == 0 else ''):
+                            ui.label(fn_display).classes(
+                                'text-xs font-mono truncate flex-1 min-w-0 text-yellow-200/90')
+                            ui.label(_ext).classes('text-xs font-mono text-gray-500 w-12 shrink-0')
+                            ui.label(host).classes('text-xs font-mono text-gray-400 w-22 shrink-0 truncate')
+                            ui.label(size_str).classes(
+                                'text-xs font-mono w-24 shrink-0 text-right text-gray-300')
+                            ui.label(speed_str).classes(
+                                'text-xs font-mono w-16 shrink-0 text-right text-cyan-400/80')
+                            with ui.row().classes('w-28 shrink-0 gap-1 items-center justify-end'):
+                                bar_color = 'cyan-500' if pct_val < 1.0 else 'green-500'
+                                ui.linear_progress(value=pct_val, show_value=False) \
+                                    .props(f'size=14px color={bar_color} track-color=gray-700') \
+                                    .classes('w-14')
+                                ui.label(pct_str).classes('text-xs font-mono text-gray-300 w-8 text-right')
                 else:
-                    ui.label('Collecting host data...').classes('text-xs text-gray-500 italic py-1')
+                    ui.label('Preparing downloads...').classes(
+                        'text-xs text-gray-500 italic py-2 px-1')
 
-                # ── Separator ──
-                ui.separator()
+    # ── Initial render ──
+    _rebuild_all()
 
-                # ── Downloads table ──
-                ui.label('Downloads').classes('text-xs text-gray-400 font-bold')
-                with ui.column().classes('w-full gap-0.5'):
-                    # Column header
-                    with ui.row().classes('w-full items-center gap-1 text-xs text-gray-500 font-bold px-1 mb-1'):
-                        ui.label('Filename').classes('flex-1 min-w-0')
-                        ui.label('Type').classes('w-12 shrink-0')
-                        ui.label('Host').classes('w-22 shrink-0')
-                        ui.label('Size').classes('w-24 shrink-0 text-right')
-                        ui.label('Speed').classes('w-16 shrink-0 text-right')
-                        ui.label('Progress').classes('w-28 shrink-0 text-right')
-                    if _active_files:
-                        for af_idx, af in enumerate(_active_files[:10]):
-                            fn = af.get('filename', '?')
-                            host = af.get('host', '')
-                            dl = af.get('downloaded', 0)
-                            total = af.get('total_bytes', 0)
-                            spd = af.get('speed', 0.0)
-                            pct_val = min(dl / total, 1.0) if total > 0 else 0
-                            pct_str = f'{int(pct_val * 100)}%' if total > 0 else '?'
-                            size_str = _fmt_size(total) if total > 0 else _fmt_size(dl)
-                            speed_str = _fmt_speed(spd) if spd > 0 else '—'
-                            fn_display = fn[:28] + '…' if len(fn) > 29 else fn
-                            _ext = os.path.splitext(fn)[1].lower()[:6] if '.' in fn else ''
-                            with ui.row().classes('w-full items-center gap-1 py-0.5 px-1 rounded').style(
-                                    'background: rgba(6,182,212,0.06)' if af_idx % 2 == 0 else ''):
-                                ui.label(fn_display).classes(
-                                    'text-xs font-mono truncate flex-1 min-w-0 text-yellow-200/90')
-                                ui.label(_ext).classes('text-xs font-mono text-gray-500 w-12 shrink-0')
-                                ui.label(host).classes('text-xs font-mono text-gray-400 w-22 shrink-0 truncate')
-                                ui.label(size_str).classes('text-xs font-mono w-24 shrink-0 text-right text-gray-300')
-                                ui.label(speed_str).classes(
-                                    'text-xs font-mono w-16 shrink-0 text-right text-cyan-400/80')
-                                with ui.row().classes('w-28 shrink-0 gap-1 items-center justify-end'):
-                                    bar_color = 'cyan-500' if pct_val < 1.0 else 'green-500'
-                                    ui.linear_progress(value=pct_val, show_value=False) \
-                                        .props(f'size=14px color={bar_color} track-color=gray-700') \
-                                        .classes('w-14')
-                                    ui.label(pct_str).classes('text-xs font-mono text-gray-300 w-8 text-right')
-                    else:
-                        ui.label('Preparing downloads...').classes(
-                            'text-xs text-gray-500 italic py-2 px-1')
-
-        if not active:
-            with dl_container:
-                ui.label('Start a download from the Models tab.').classes(
-                    'text-gray-400 py-8 text-center text-lg')
-
-    _update_cancel_bar()
-    _render()
-    # Update data every 2s; cancel bar only on model-list change
-    ui.timer(2.0, _render, active=True)
-    ui.timer(2.0, _update_cancel_bar, active=True)
+    # Timer: update in-place every 2s; full rebuild only when structure changes
+    ui.timer(2.0, _update_all, active=True)
 
 
 # ── Main Page ─────────────────────────────────────────────────────────
