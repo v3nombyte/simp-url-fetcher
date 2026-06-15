@@ -2246,6 +2246,10 @@ class DownloadManager:
             url_to_post.update(_gallery_url_to_parent)
         _overall_total = len(all_urls)  # update after gallery expansion
         _failed_resolve_urls: list[str] = []  # track resolution-failed URLs (mapped to root album if applicable)
+        # Track resolved-but-not-yet-downloaded URLs by host for the host queue display
+        _resolved_pending_hosts: dict[str, int] = {}
+        # Also track by src_url so _dl_one can decrement when a file downloads
+        _resolved_pending_urls: set[str] = set()
 
         _log(f'Resolving {len(all_urls)} URLs...')
         if progress_callback:
@@ -2302,13 +2306,23 @@ class DownloadManager:
                 _overall_elapsed_resolve, _overall_completed, _overall_total
             )
             if progress_callback:
+                # Build pending host counts from resolved URLs not yet downloaded
+                # (this batch's resolved URLs are pending as downloads haven't started yet)
+                for url in batch:
+                    rurl = batch_result.get(url)
+                    if rurl:
+                        _host = urlparse(rurl).netloc
+                        if url not in _resolved_pending_urls:
+                            _resolved_pending_urls.add(url)
+                            _resolved_pending_hosts[_host] = _resolved_pending_hosts.get(_host, 0) + 1
                 progress_callback('resolve_progress',
                                   resolved=resolved_so_far, total=total_for_resolve,
                                   eta=int(resolve_eta),
                                   overall_total=_overall_total,
                                   overall_completed=_overall_completed,
                                   overall_eta=_overall_eta_resolve,
-                                  batch_info=f'{batch_ok} OK, {batch_fail} FAIL')
+                                  batch_info=f'{batch_ok} OK, {batch_fail} FAIL',
+                                  pending_hosts=dict(_resolved_pending_hosts))
 
             # Download resolved URLs from this batch concurrently
             # (up to max_concurrent total, max 2 per host at a time)
@@ -2340,6 +2354,13 @@ class DownloadManager:
                 _was_skipped = dl_stats.skipped > _skip_before
                 # Fire progress callback AFTER download completes so stats are accurate
                 if dl_progress_callback:
+                    # Decrement pending host count for this URL
+                    _src_host = urlparse(res_url or src_url).netloc
+                    if src_url in _resolved_pending_urls:
+                        _resolved_pending_urls.discard(src_url)
+                        _resolved_pending_hosts[_src_host] = max(0, _resolved_pending_hosts.get(_src_host, 0) - 1)
+                        if _resolved_pending_hosts[_src_host] == 0:
+                            del _resolved_pending_hosts[_src_host]
                     _overall_completed_now = dl_stats.completed + dl_stats.failed + dl_stats.skipped
                     _overall_elapsed_now = time.time() - _overall_start
                     _overall_eta_now = _calc_overall_eta(
@@ -2352,7 +2373,8 @@ class DownloadManager:
                         skipped=_was_skipped,
                         overall_total=_overall_total,
                         overall_completed=_overall_completed_now,
-                        overall_eta=_overall_eta_now)
+                        overall_eta=_overall_eta_now,
+                        pending_hosts=dict(_resolved_pending_hosts))
                 return ok
 
             # ── Process resolved URLs in host-diverse (round-robin) order ──

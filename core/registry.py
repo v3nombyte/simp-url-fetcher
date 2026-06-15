@@ -137,7 +137,8 @@ class ModelRegistry:
                                active_files: list | None = None,
                                host_queue: dict | None = None,
                                resolve_failed_count: int = 0,
-                               resolve_failed_file: str = ''):
+                               resolve_failed_file: str = '',
+                               pending_hosts: dict | None = None):
         """Save in-progress download status (survives page refresh during download)."""
         with self._lock:
             entry = self.models.get(model_name)
@@ -159,6 +160,7 @@ class ModelRegistry:
                 'active_queue': active_queue or [],
                 'active_files': active_files or [],
                 'host_queue': host_queue or {},
+                'pending_hosts': pending_hosts or {},
                 'updated_at': datetime.now().strftime('%H:%M:%S'),
             }
             self.models[model_name] = entry

@@ -2042,6 +2042,7 @@ def build_models_tab():
                                             active_files=_af_copy,
                                             active_queue=_last_queue,
                                             host_queue=_last_host_queue,
+                                            pending_hosts=_last_host_queue,
                                         )
                                 try:
                                     with open(json_p) as _jf:
@@ -2071,6 +2072,7 @@ def build_models_tab():
                                         oc = kw.get('overall_completed', 0)
                                         ot = kw.get('overall_total', t)
                                         oeta = kw.get('overall_eta', 0)
+                                        _pending_hosts = kw.get('pending_hosts', {})
                                         if oc > 0 and oeta > 0:
                                             _status_queue.append(('text', f'Resolving {r}/{t} — overall [{oc}/{ot}] ETA {_fmt_eta(oeta)}'))
                                         else:
@@ -2080,7 +2082,8 @@ def build_models_tab():
                                                    if _completed[0] > 0
                                                    else f'Resolving {r}/{t}')
                                                    + (f' ETA {_fmt_eta(eta)}' if eta else ''),
-                                            total_urls=ot if isinstance(ot, int) else _total_urls[0])
+                                            total_urls=ot if isinstance(ot, int) else _total_urls[0],
+                                            pending_hosts=_pending_hosts)
                                     elif phase == 'resolved':
                                         okc = kw.get('ok', 0)
                                         fld = kw.get('failed', 0)
@@ -2167,6 +2170,11 @@ def build_models_tab():
                                         # Store for active file poller (0.5s saves overwrite host_queue without these)
                                         _last_host_queue.clear()
                                         _last_host_queue.update(_host_counts)
+                                        # Override with pending_hosts from downloader (resolved URLs queue) if available
+                                        _file_pending_hosts = kw.get('pending_hosts', {})
+                                        if _file_pending_hosts:
+                                            _last_host_queue.clear()
+                                            _last_host_queue.update(_file_pending_hosts)
                                         _last_queue.clear()
                                         _last_queue.extend(_queue)
                                         _now = time.time()
@@ -2184,7 +2192,8 @@ def build_models_tab():
                                                 current_file_strategy=strategy if not skipped else '',
                                                 active_queue=_queue,
                                                 active_files=_af_copy,
-                                                host_queue=_host_counts)
+                                                host_queue=_file_pending_hosts if _file_pending_hosts else _host_counts,
+                                                pending_hosts=_file_pending_hosts)
                                             _last_registry_save[0] = _now
                                     elif phase == 'complete':
                                         okc = kw.get('completed', 0)
@@ -2872,7 +2881,7 @@ def build_download_tab():
             _total_urls = dl_info.get('total_urls', 0)
             _speed_bps = dl_info.get('speed_bps', 0)
             _status_text = dl_info.get('status', '')
-            _host_queue = dl_info.get('host_queue', {})
+            _host_queue = dl_info.get('pending_hosts', None) or dl_info.get('host_queue', {})
             _active_files = dl_info.get('active_files', [])
             _total_done = _completed + _failed + _skipped
 
@@ -2919,19 +2928,24 @@ def build_download_tab():
 
             # Host queue — rebuild inner container (content changes shape)
             refs['host_queue'].clear()
-            if _host_queue:
-                _sorted_hosts = sorted(_host_queue.items(), key=lambda x: -x[1])
-                for _h_idx, (_host, _hcount) in enumerate(_sorted_hosts):
-                    with refs['host_queue']:
+            with refs['host_queue']:
+                # Summary: resolved / unresolved counts
+                _pending_resolved = sum(_host_queue.values())
+                _total_resolved = _total_done + _pending_resolved
+                _unresolved = max(0, _total_urls - _total_resolved)
+                ui.label(f'Resolved: {_total_resolved}/{_total_urls} · Pending: {_pending_resolved} hosts · Unresolved: {_unresolved}').classes(
+                    'text-xs text-gray-500 font-mono mb-1')
+                if _host_queue:
+                    _sorted_hosts = sorted(_host_queue.items(), key=lambda x: -x[1])
+                    for _h_idx, (_host, _hcount) in enumerate(_sorted_hosts):
                         with ui.row().classes('w-full items-center gap-1 py-0.5 px-1 rounded').style(
                                 'background: rgba(6,182,212,0.06)' if _h_idx % 2 == 0 else ''):
                             ui.label(_host).classes(
                                 'text-xs font-mono truncate flex-1 min-w-0 text-gray-400')
                             ui.label(str(_hcount)).classes(
                                 'text-xs font-mono w-16 shrink-0 text-right text-yellow-200/90')
-            else:
-                with refs['host_queue']:
-                    ui.label('Collecting host data...').classes(
+                else:
+                    ui.label('No pending URLs — all resolved files downloaded or resolving not started').classes(
                         'text-xs text-gray-500 italic py-1')
 
             # Downloads table — rebuild inner container (content changes shape)
