@@ -1842,12 +1842,44 @@ def build_models_tab():
                     out_stats = scan_output_dir(name)
                     if out_stats['exists'] and out_stats['total_files'] > 0:
                         sz = _fmt_size(out_stats['total_bytes'])
+                        # Check for download metadata
+                        _dl_entry = registry.get(name)
+                        _dl_completed_at = ''
+                        _dl_resolve_failed = 0
+                        _dl_failed_file = ''
+                        if _dl_entry and _dl_entry.get('download'):
+                            _dl_info = _dl_entry['download']
+                            _dl_completed_at = _dl_info.get('completed_at', '') or ''
+                            if _dl_info.get('status') == 'complete':
+                                _dl_resolve_failed = _dl_info.get('resolve_failed_count', 0)
+                                _dl_failed_file = _dl_info.get('resolve_failed_file', '')
                         with ui.row().classes('w-full gap-x-4 gap-y-1 mt-1 p-2 rounded text-sm items-center').style('background: rgba(34,197,94,0.1); border: 1px solid rgba(34,197,94,0.25)'):
                             ui.label('✓ Downloaded').classes('text-green-400 font-bold')
                             with ui.column().classes('gap-0'):
                                 ui.label(f'Posts: {out_stats["post_folders"]}').classes('text-gray-200 font-mono')
                                 ui.label(f'Files: {out_stats["total_files"]}').classes('text-gray-200 font-mono')
                                 ui.label(f'Size: {sz}').classes('text-gray-300 font-mono')
+                                if _dl_completed_at:
+                                    ui.label(f'Completed: {_dl_completed_at}').classes('text-gray-400 font-mono text-xs')
+                            if _dl_failed_file and os.path.exists(_dl_failed_file):
+                                def _make_view_failed(path, count):
+                                    def view():
+                                        try:
+                                            with open(path) as f:
+                                                content = f.read()
+                                        except Exception:
+                                            content = '(error reading file)'
+                                        with ui.dialog() as dlg, ui.card().classes('bg-gray-800 w-3/4 max-w-2xl max-h-96'):
+                                            ui.label(f'Resolution-Failed URLs ({count})').classes('text-md font-bold')
+                                            ui.separator()
+                                            with ui.scroll_area().classes('w-full h-64'):
+                                                ui.label(content).classes('text-xs font-mono text-red-300 whitespace-pre-wrap')
+                                            ui.button('Close', on_click=dlg.close).props('flat').classes('mt-2')
+                                        dlg.open()
+                                    return view
+                                ui.button(f'Failed: {_dl_resolve_failed}', icon='error_outline',
+                                          on_click=_make_view_failed(_dl_failed_file, _dl_resolve_failed)) \
+                                    .props('flat dense size=sm color=negative')
 
                     # Download button for normal mode
                     normal_data = modes.get('normal', {})
@@ -2152,15 +2184,23 @@ def build_models_tab():
                                         ot = kw.get('overall_total', okc + fld)
                                         total_ok = okc + skp
                                         skp_str = f', {skp} skipped' if skp else ''
-                                        _status_queue.append(('text', f'✓ Download complete: {okc} OK, {fld} failed{skp_str} ({_fmt_size(tbytes)})'))
+                                        _resolve_failed = kw.get('resolve_failed', 0)
+                                        _resolve_failed_file = kw.get('resolve_failed_file', '')
+                                        if _resolve_failed:
+                                            rf_str = f', {_resolve_failed} unresolved'
+                                        else:
+                                            rf_str = ''
+                                        _status_queue.append(('text', f'✓ Download complete: {okc} OK, {fld} failed{skp_str}{rf_str} ({_fmt_size(tbytes)})'))
                                         _status_queue.append(('btn_enable', None))
                                         _status_queue.append(('cancel_hide', None))
                                         _status_queue.append(('stop_poll', None))
                                         _status_queue.append(('checklogs_hide', None))
                                         _status_queue.append(('notify', f'Download complete: {okc} files ({_fmt_size(tbytes)})'))
                                         _status_queue.append(('refresh', None))
-                                        log(f'Download finished for {mname}: {okc} OK, {fld} failed{skp_str}, {_fmt_size(tbytes)}')
-                                        registry.register_download(mname, okc + fld + skp, total_ok, tbytes, fld, skp)
+                                        log(f'Download finished for {mname}: {okc} OK, {fld} failed{skp_str}{rf_str}, {_fmt_size(tbytes)}')
+                                        registry.register_download(mname, okc + fld + skp, total_ok, tbytes, fld, skp,
+                                                                   resolve_failed_count=_resolve_failed,
+                                                                   resolve_failed_file=_resolve_failed_file)
 
                                 _cancel_events[mname] = _dl_cancel_event
                                 out_base = os.path.join(PROJECT_DIR, settings.output_dir)

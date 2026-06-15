@@ -102,7 +102,9 @@ class ModelRegistry:
         self.save()
 
     def register_download(self, model_name: str, total_urls: int, total_files: int,
-                          total_bytes: int, failed_count: int, skipped_count: int):
+                          total_bytes: int, failed_count: int, skipped_count: int,
+                          resolve_failed_count: int = 0,
+                          resolve_failed_file: str = ''):
         """Register completed download results for a model."""
         with self._lock:
             entry = self.models.get(model_name)
@@ -115,6 +117,8 @@ class ModelRegistry:
                 'total_bytes': total_bytes,
                 'failed_count': failed_count,
                 'skipped_count': skipped_count,
+                'resolve_failed_count': resolve_failed_count,
+                'resolve_failed_file': resolve_failed_file,
                 'status': 'complete',
                 'completed_at': datetime.now().strftime('%Y-%m-%d %H:%M'),
             }
@@ -131,7 +135,9 @@ class ModelRegistry:
                                current_file_strategy: str = '',
                                active_queue: list | None = None,
                                active_files: list | None = None,
-                               host_queue: dict | None = None):
+                               host_queue: dict | None = None,
+                               resolve_failed_count: int = 0,
+                               resolve_failed_file: str = ''):
         """Save in-progress download status (survives page refresh during download)."""
         with self._lock:
             entry = self.models.get(model_name)
@@ -142,6 +148,8 @@ class ModelRegistry:
                 'total_bytes': total_bytes,
                 'failed_count': failed_count,
                 'skipped_count': skipped_count,
+                'resolve_failed_count': resolve_failed_count,
+                'resolve_failed_file': resolve_failed_file,
                 'total_urls': total_urls,
                 'status': status,
                 'speed_bps': speed_bps,

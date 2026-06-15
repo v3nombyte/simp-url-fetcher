@@ -2222,6 +2222,7 @@ class DownloadManager:
         _gallery_count = 0
         _expanded_all_urls: list[str] = []
         _gallery_url_to_parent: dict[str, tuple[int, int]] = {}
+        _child_to_album_url: dict[str, str] = {}  # expanded child → original album URL
         for _g_idx, url in enumerate(all_urls):
             # Check cancel every 20 URLs during gallery expansion (which makes HTTP calls)
             if cancel_event and cancel_event.is_set():
@@ -2234,6 +2235,7 @@ class DownloadManager:
                 for nu in expanded:
                     if nu not in _gallery_url_to_parent:
                         _gallery_url_to_parent[nu] = (parent_page, parent_post)
+                        _child_to_album_url[nu] = url  # track original album URL
                         _expanded_all_urls.append(nu)
             else:
                 _expanded_all_urls.append(url)
@@ -2243,6 +2245,7 @@ class DownloadManager:
             all_urls = _expanded_all_urls
             url_to_post.update(_gallery_url_to_parent)
         _overall_total = len(all_urls)  # update after gallery expansion
+        _failed_resolve_urls: list[str] = []  # track resolution-failed URLs (mapped to root album if applicable)
 
         _log(f'Resolving {len(all_urls)} URLs...')
         if progress_callback:
@@ -2354,11 +2357,14 @@ class DownloadManager:
 
             # ── Process resolved URLs in host-diverse (round-robin) order ──
             from collections import defaultdict
-            # Separate unresolved (decrement total) from resolved
+            # Separate unresolved (track as resolution failures) from resolved
             resolved_for_batch = []
             for url in batch:
                 if not batch_result.get(url):
-                    _overall_total -= 1  # won't produce any files
+                    # Instead of decrementing _overall_total (which breaks progress),
+                    # track the failed URL. Map album children to their parent album URL.
+                    _failed_url = _child_to_album_url.get(url, url)
+                    _failed_resolve_urls.append(_failed_url)
                 else:
                     resolved_for_batch.append(url)
 
@@ -2564,13 +2570,37 @@ class DownloadManager:
 
         _log(f'Complete: {stats.completed} OK, {stats.failed} failed, {stats.skipped} skipped')
         _log(f'Total size: {stats.total_bytes / 1024 / 1024:.1f} MB')
+
+        # Write resolution-failed URLs to a persistent file
+        fail_resolve_path = ''
+        if _failed_resolve_urls:
+            if models_data_dir:
+                fail_resolve_dir = os.path.join(models_data_dir, model_name)
+            else:
+                fail_resolve_dir = os.path.join(os.path.dirname(os.path.abspath(self.output_base)), 'models_data', model_name)
+            os.makedirs(fail_resolve_dir, exist_ok=True)
+            fail_resolve_path = os.path.join(fail_resolve_dir, f'{model_name}_failed_urls.txt')
+            # Deduplicate while preserving order
+            _seen = set()
+            _deduped = []
+            for _fu in _failed_resolve_urls:
+                if _fu not in _seen:
+                    _seen.add(_fu)
+                    _deduped.append(_fu)
+            with open(fail_resolve_path, 'w') as f:
+                for _fu in _deduped:
+                    f.write(f'{_fu}\n')
+            _log(f'Written resolution-failed URLs: {fail_resolve_path} ({len(_deduped)} unique URLs)')
+
         if progress_callback:
             _overall_completed_final = stats.completed + stats.failed + stats.skipped
             progress_callback('complete', completed=stats.completed, failed=stats.failed,
                               skipped=stats.skipped, total_bytes=stats.total_bytes,
                               overall_total=_overall_total,
                               overall_completed=_overall_completed_final,
-                              errors=stats.errors[:10])
+                              errors=stats.errors[:10],
+                              resolve_failed=len(_failed_resolve_urls),
+                              resolve_failed_file=fail_resolve_path if _failed_resolve_urls else '')
 
         if stats.errors:
             _log(f'Errors ({len(stats.errors)}):', 'WARN')
