@@ -17,8 +17,12 @@ from .models import Post, ScanResult
 # ── Config ──────────────────────────────────────────────────────────
 
 PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# User-editable files (not in git). Created by user or first-run copy from .default.json
 PATTERNS_PATH = os.path.join(PROJECT_DIR, "url_patterns.json")
 SKIP_PATH = os.path.join(PROJECT_DIR, "skip_url.json")
+# Version-controlled default templates (shipped with repo)
+PATTERNS_DEFAULT_PATH = os.path.join(PROJECT_DIR, "url_patterns.default.json")
+SKIP_DEFAULT_PATH = os.path.join(PROJECT_DIR, "skip_url.default.json")
 
 # Default patterns to match if file doesn't exist
 DEFAULT_PATTERNS = [
@@ -306,9 +310,9 @@ def extract_from_html(
         ScanResult with posts.
     """
     if patterns is None:
-        patterns = load_json(PATTERNS_PATH, DEFAULT_PATTERNS)
+        patterns = load_json(PATTERNS_PATH, None) or load_json(PATTERNS_DEFAULT_PATH, DEFAULT_PATTERNS)
     if skip_patterns is None:
-        skip_patterns = load_json(SKIP_PATH, DEFAULT_SKIP)
+        skip_patterns = load_json(SKIP_PATH, None) or load_json(SKIP_DEFAULT_PATH, DEFAULT_SKIP)
 
     filename = os.path.basename(html_path)
     page_num = extract_page_number(filename)

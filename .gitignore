@@ -36,6 +36,10 @@ settings.json
 config/settings.json
 settings.json
 
+# User-editable URL filter files (templates are .default.json)
+skip_url.json
+url_patterns.json
+
 # Logs
 *.log
 

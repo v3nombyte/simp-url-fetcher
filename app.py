@@ -1270,6 +1270,8 @@ def build_settings_tab():
     ui.label('Edit pattern lists used by the extractor. Changes take effect on the next scan.').classes('text-sm mb-2')
     ui.label('Keep patterns (url_patterns.json) — URLs matching any line are INCLUDED in extraction.').classes('text-xs text-green-400')
     ui.label('Skip patterns (skip_url.json) — URLs matching any line are EXCLUDED (thumbnails, avatars, social links).').classes('text-xs text-orange-400')
+    ui.label('User files override the version-controlled templates (url_patterns.default.json / skip_url.default.json). '
+             'Templates update on git pull without overwriting your local edits.').classes('text-xs text-blue-400')
 
     def make_saver(fname):
         def saver(txt):
@@ -1286,9 +1288,13 @@ def build_settings_tab():
         return saver
 
     incl_path = os.path.join(PROJECT_DIR, 'url_patterns.json')
+    incl_default = os.path.join(PROJECT_DIR, 'url_patterns.default.json')
     incl_text = ''
     if os.path.exists(incl_path):
         with open(incl_path) as f:
+            incl_text = f.read()
+    elif os.path.exists(incl_default):
+        with open(incl_default) as f:
             incl_text = f.read()
     else:
         incl_text = '[]'
@@ -1298,9 +1304,13 @@ def build_settings_tab():
         .props('outline')
 
     excl_path = os.path.join(PROJECT_DIR, 'skip_url.json')
+    excl_default = os.path.join(PROJECT_DIR, 'skip_url.default.json')
     excl_text = ''
     if os.path.exists(excl_path):
         with open(excl_path) as f:
+            excl_text = f.read()
+    elif os.path.exists(excl_default):
+        with open(excl_default) as f:
             excl_text = f.read()
     else:
         excl_text = '[]'
@@ -2642,7 +2652,10 @@ def build_info_tab():
             ui.label('• skip_url.json (skip)').classes('text-orange font-bold')
             ui.label('URLs matching any line are EXCLUDED — used to filter out thumbnails, avatars, social links, forum assets. 19 entries default.').classes('text-gray-300')
         ui.label('Edit in Settings → URL Filters. Entries are regex substrings (not exact URLs). Changes apply on the next extraction run.').classes('text-xs text-gray-400 mt-1')
-        ui.label('These files live in the project root and are version-controlled (committed as templates).').classes('text-xs text-gray-400')
+        ui.label('These files live in the project root and are version-controlled (committed as templates). '
+                 'User edits to skip_url.json / url_patterns.json will not conflict with git pulls. '
+                 'The default templates (skip_url.default.json / url_patterns.default.json) ship with the repo and '
+                 'update on pull without overwriting your local overrides.').classes('text-xs text-gray-400')
 
     # ── Supported Hosts & URL Processing ──
     with ui.card().classes('w-full bg-gray-800 mt-2'):
