@@ -1947,6 +1947,8 @@ def build_models_tab():
                                 _active_files_lock = threading.Lock()
                                 _last_active_save = [0.0]
                                 _all_urls_list = []
+                                _last_host_queue: dict = {}
+                                _last_queue: list = []
 
                                 def _file_progress(url, filename, downloaded, total_bytes, speed):
                                     with _active_files_lock:
@@ -1996,6 +1998,8 @@ def build_models_tab():
                                             current_file=filename,
                                             current_file_size=total_bytes,
                                             active_files=_af_copy,
+                                            active_queue=_last_queue,
+                                            host_queue=_last_host_queue,
                                         )
                                 try:
                                     with open(json_p) as _jf:
@@ -2118,6 +2122,11 @@ def build_models_tab():
                                                 _base, _ext = os.path.splitext(_uq_fn)
                                                 _qtxt = _base[:35 - len(_ext) - 3] + '...' + _ext if len(_uq_fn) > 35 else _uq_fn
                                                 _queue.append(_qtxt)
+                                        # Store for active file poller (0.5s saves overwrite host_queue without these)
+                                        _last_host_queue.clear()
+                                        _last_host_queue.update(_host_counts)
+                                        _last_queue.clear()
+                                        _last_queue.extend(_queue)
                                         _now = time.time()
                                         if _now - _last_registry_save[0] >= 1.0 or oc == ot:
                                             with _active_files_lock:
