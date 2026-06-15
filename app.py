@@ -36,7 +36,7 @@ from core.crawler import crawl_thread, validate_cookie_json
 settings = Settings.load()
 registry = ModelRegistry(os.path.join(PROJECT_DIR, 'models_registry.json'))
 
-VERSION = "0.0.1"
+VERSION = "0.0.1-dev"
 RESTART_MARKER = os.path.join(PROJECT_DIR, '.restart.rqd')
 
 # In-memory state for import/export tab
