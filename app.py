@@ -1994,6 +1994,13 @@ def build_models_tab():
 
                                 def _file_progress(url, filename, downloaded, total_bytes, speed):
                                     with _active_files_lock:
+                                        # Prune stale completed entries (older than 5s)
+                                        _now_p = time.time()
+                                        _active_files[:] = [
+                                            f for f in _active_files
+                                            if f.get('status') != 'completed'
+                                            or (f.get('completed_at', 0) + 5.0) > _now_p
+                                        ]
                                         for f in _active_files:
                                             if f['url'] == url:
                                                 f['downloaded'] = downloaded
@@ -2104,10 +2111,16 @@ def build_models_tab():
                                         ok = kw.get('ok', True)
                                         size = kw.get('size', 0)
                                         skipped = kw.get('skipped', False)
-                                        # Remove completed file from active list
+                                        # Keep completed file in the list for 5s so the UI can display it
+                                        _COMPLETED_TTL = 5.0
                                         if url:
                                             with _active_files_lock:
-                                                _active_files[:] = [f for f in _active_files if f['url'] != url]
+                                                for f in _active_files:
+                                                    if f['url'] == url:
+                                                        f['status'] = 'completed'
+                                                        f['completed_at'] = time.time()
+                                                        f['total_bytes'] = size
+                                                        break
                                         if skipped:
                                             _skipped_count[0] += 1
                                         elif ok:
@@ -2959,8 +2972,17 @@ def build_download_tab():
                     ui.label('Size').classes('w-24 shrink-0 text-right')
                     ui.label('Speed').classes('w-16 shrink-0 text-right')
                     ui.label('Progress').classes('w-28 shrink-0 text-right')
-                if _active_files:
-                    for af_idx, af in enumerate(_active_files[:10]):
+
+                _dl_entries = _active_files if isinstance(_active_files, list) else []
+
+                # Split into in-progress and recently completed
+                _in_progress = [f for f in _dl_entries if f.get('status') != 'completed']
+                _completed_list = [f for f in _dl_entries if f.get('status') == 'completed']
+
+                if _in_progress:
+                    ui.label(f'In Progress ({len(_in_progress)})').classes(
+                        'text-xs text-cyan-400 font-bold mt-1 mb-0.5')
+                    for af_idx, af in enumerate(_in_progress[:10]):
                         fn = af.get('filename', '?')
                         host = af.get('host', '')
                         dl = af.get('downloaded', 0)
@@ -2988,15 +3010,43 @@ def build_download_tab():
                                     .props(f'size=14px color={bar_color} track-color=gray-700') \
                                     .classes('w-14')
                                 ui.label(pct_str).classes('text-xs font-mono text-gray-300 w-8 text-right')
-                else:
-                    ui.label('Preparing downloads...').classes(
-                        'text-xs text-gray-500 italic py-2 px-1')
+
+                if _completed_list:
+                    ui.label(f'Recently Completed ({len(_completed_list)})').classes(
+                        'text-xs text-green-400 font-bold mt-1 mb-0.5')
+                    for af_idx, af in enumerate(_completed_list[:10]):
+                        fn = af.get('filename', '?')
+                        host = af.get('host', '')
+                        total = af.get('total_bytes', 0)
+                        size_str = _fmt_size(total) if total > 0 else '?'
+                        fn_display = fn[:35] + '…' if len(fn) > 36 else fn
+                        _ext = os.path.splitext(fn)[1].lower()[:6] if '.' in fn else ''
+                        with ui.row().classes('w-full items-center gap-1 py-0.5 px-1 rounded').style(
+                                'background: rgba(34,197,94,0.06)' if af_idx % 2 == 0 else ''):
+                            ui.label(fn_display).classes(
+                                'text-xs font-mono truncate flex-1 min-w-0 text-green-300/70')
+                            ui.label(_ext).classes('text-xs font-mono text-gray-500 w-12 shrink-0')
+                            ui.label(host).classes('text-xs font-mono text-gray-500 w-22 shrink-0 truncate')
+                            ui.label(size_str).classes(
+                                'text-xs font-mono w-24 shrink-0 text-right text-gray-500')
+                            ui.label('✓').classes(
+                                'text-xs font-mono w-16 shrink-0 text-right text-green-500')
+                            ui.label('100%').classes(
+                                'text-xs font-mono w-28 shrink-0 text-right text-green-500/70')
+
+                if not _in_progress and not _completed_list:
+                    if _total_done > 0:
+                        ui.label(f'{_total_done} files completed — waiting for next batch').classes(
+                            'text-xs text-gray-500 italic py-2 px-1')
+                    else:
+                        ui.label('Preparing downloads...').classes(
+                            'text-xs text-gray-500 italic py-2 px-1')
 
     # ── Initial render ──
     _rebuild_all()
 
-    # Timer: update in-place every 2s; full rebuild only when structure changes
-    ui.timer(2.0, _update_all, active=True)
+    # Timer: update in-place every 1s; full rebuild only when structure changes
+    ui.timer(1.0, _update_all, active=True)
 
 
 # ── Main Page ─────────────────────────────────────────────────────────
