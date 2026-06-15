@@ -2012,12 +2012,12 @@ def build_models_tab():
                                         total_posts = kw.get('total_posts', '?')
                                         _status_queue.append(('text', f'→ Download started: {total_posts} posts, {_total_urls[0]} URLs total'))
                                         log(f'Download starting for {mname}: {total_posts} posts, {_total_urls[0]} URLs')
-                                        registry.set_download_progress(mname, 0, 0, 0, 0, status=f'Starting ({_total_urls[0]} URLs)', total_urls=_total_urls[0])
+                                        registry.set_download_progress(mname, _completed[0], _total_bytes_val[0], _failed_count[0], _skipped_count[0], status=f'Starting ({_total_urls[0]} URLs)', total_urls=_total_urls[0])
                                     elif phase == 'resolving':
                                         t = kw.get('total', '?')
                                         _status_queue.append(('text', f'Resolving {t} URLs...'))
                                         log(f'Resolving for {mname}...')
-                                        registry.set_download_progress(mname, 0, 0, 0, 0, status=f'Resolving {t} URLs', total_urls=_total_urls[0])
+                                        registry.set_download_progress(mname, _completed[0], _total_bytes_val[0], _failed_count[0], _skipped_count[0], status=f'Resolving {t} URLs', total_urls=_total_urls[0])
                                     elif phase == 'resolve_progress':
                                         r = kw.get('resolved', 0)
                                         t = kw.get('total', 0)
@@ -2029,14 +2029,14 @@ def build_models_tab():
                                             _status_queue.append(('text', f'Resolving {r}/{t} — overall [{oc}/{ot}] ETA {_fmt_eta(oeta)}'))
                                         else:
                                             _status_queue.append(('text', f'Resolving {r}/{t} (ETA {_fmt_eta(eta)})'))
-                                        registry.set_download_progress(mname, 0, 0, 0, 0,
+                                        registry.set_download_progress(mname, _completed[0], _total_bytes_val[0], _failed_count[0], _skipped_count[0],
                                             status=f'Resolving {r}/{t}' + (f' ETA {_fmt_eta(eta)}' if eta else ''),
                                             total_urls=_total_urls[0])
                                     elif phase == 'resolved':
                                         okc = kw.get('ok', 0)
                                         fld = kw.get('failed', 0)
                                         log(f'Resolved: {okc} OK, {fld} failed')
-                                        registry.set_download_progress(mname, 0, 0, 0, 0,
+                                        registry.set_download_progress(mname, _completed[0], _total_bytes_val[0], _failed_count[0], _skipped_count[0],
                                             status=f'Resolved: {okc} OK, {fld} failed',
                                             total_urls=_total_urls[0])
                                     elif phase == 'file':
@@ -2641,21 +2641,6 @@ def build_info_tab():
 
 # ── Download Tab ────────────────────────────────────────────────────────
 
-def _cancel_download_immediate(model_name: str):
-    """Write cancel file immediately + set in-memory event. No dialog needed."""
-    cancel_file = os.path.join(PROJECT_DIR, settings.output_dir, model_name, '.cancel')
-    try:
-        os.makedirs(os.path.dirname(cancel_file), exist_ok=True)
-        with open(cancel_file, 'w') as f:
-            f.write('cancel')
-        log(f'Cancel file written for {model_name}', level='WARN')
-    except Exception as e:
-        log(f'Failed to write cancel file: {e}', 'WARN')
-    ev = _cancel_events.get(model_name)
-    if ev:
-        ev.set()
-    ui.notify(f'Cancel requested for {model_name}', type='warning')
-
 
 def build_download_tab():
     """Show active downloads — truly persistent layout. Card structures built once, values updated in-place."""
@@ -2686,7 +2671,7 @@ def build_download_tab():
             ui.label('Active Downloads:').classes('text-sm font-bold text-gray-300 mr-2')
             for mn in active_models:
                 ui.button(f'✕ {mn}', icon='cancel',
-                          on_click=lambda _e, n=mn: _cancel_download_immediate(n)) \
+                          on_click=lambda _e, n=mn: _show_cancel_dialog(n)) \
                     .props('color=negative outline size=sm')
 
     # ── Card builder: creates the once-off structure ──
@@ -2705,7 +2690,7 @@ def build_download_tab():
                     refs['eta'] = ui.label('').classes('text-xs font-mono text-orange-400')
                     ui.space()
                     ui.button('Cancel', icon='cancel',
-                              on_click=lambda _e, mn=name: _cancel_download_immediate(mn)) \
+                              on_click=lambda _e, mn=name: _show_cancel_dialog(mn)) \
                         .props('color=negative outline size=sm')
 
                 # Stats
