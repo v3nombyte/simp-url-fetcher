@@ -2030,8 +2030,11 @@ def build_models_tab():
                                         else:
                                             _status_queue.append(('text', f'Resolving {r}/{t} (ETA {_fmt_eta(eta)})'))
                                         registry.set_download_progress(mname, _completed[0], _total_bytes_val[0], _failed_count[0], _skipped_count[0],
-                                            status=f'Resolving {r}/{t}' + (f' ETA {_fmt_eta(eta)}' if eta else ''),
-                                            total_urls=_total_urls[0])
+                                            status=(f'Resolving {r}/{t} · Downloaded {_completed[0]} files · {_fmt_size(_total_bytes_val[0])}'
+                                                   if _completed[0] > 0
+                                                   else f'Resolving {r}/{t}')
+                                                   + (f' ETA {_fmt_eta(eta)}' if eta else ''),
+                                            total_urls=ot if isinstance(ot, int) else _total_urls[0])
                                     elif phase == 'resolved':
                                         okc = kw.get('ok', 0)
                                         fld = kw.get('failed', 0)
